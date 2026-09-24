@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ลงเวลา</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<style>
+  :root{
+    --ground:#E9EBEE;
+    --surface:#FFFFFF;
+    --ink:#15191F;
+    --muted:#5C6672;
+    --line:#D2D7DE;
+    --action:#1B4DA8;
+    --ok:#17803D;
+    --warn:#B45309;
+    --tap:64px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{
+    font-family:'IBM Plex Sans Thai',-apple-system,BlinkMacSystemFont,'Helvetica Neue',sans-serif;
+    background:var(--ground); color:var(--ink);
+    padding:calc(20px + env(safe-area-inset-top)) 20px calc(20px + env(safe-area-inset-bottom));
+    display:flex; flex-direction:column; gap:16px;
+    font-size:17px; line-height:1.5;
+  }
+
+  .who{font-size:15px; color:var(--muted)}
+  .who strong{color:var(--ink); font-weight:600}
+
+  .clock{
+    background:var(--surface); border:1px solid var(--line); border-radius:14px;
+    padding:22px 20px; text-align:center;
+  }
+  .clock .t{font-size:52px; font-weight:600; letter-spacing:-.02em; font-variant-numeric:tabular-nums; line-height:1}
+  .clock .d{margin-top:6px; color:var(--muted); font-size:15px}
+  .state{
+    margin-top:14px; padding-top:14px; border-top:1px solid var(--line);
+    font-size:16px; color:var(--muted);
+  }
+  .state b{color:var(--ok); font-weight:600}
+
+  button{
+    font:inherit; font-weight:600; border:0; border-radius:14px;
+    min-height:var(--tap); width:100%; color:#fff; background:var(--action);
+    display:flex; align-items:center; justify-content:center; gap:10px;
+  }
+  button:disabled{background:#98A2AF}
+  button:active:not(:disabled){transform:scale(.985)}
+  button svg{width:24px;height:24px;flex:none}
+  .ghost{background:transparent; color:var(--action); border:1.5px solid var(--action); min-height:52px}
+
+  #file{display:none}
+
+  .note{font-size:13.5px; color:var(--muted); text-align:center; line-height:1.55}
+
+  .result{
+    background:var(--surface); border:1px solid var(--line); border-radius:14px;
+    padding:20px; text-align:center;
+  }
+  .result img{width:118px;height:118px;object-fit:cover;border-radius:12px;margin-bottom:14px}
+  .result .head{font-size:22px;font-weight:600;color:var(--ok)}
+  .result .sub{color:var(--muted);font-size:15px;margin-top:6px}
+  .result .flag{color:var(--warn);font-size:14.5px;margin-top:10px}
+
+  .hide{display:none}
+  .spin{width:22px;height:22px;border:2.5px solid rgba(255,255,255,.35);
+        border-top-color:#fff;border-radius:50%;animation:s .7s linear infinite}
+  @keyframes s{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){.spin{animation-duration:2s}}
+</style>
+</head>
+<body>
+
+<p class="who" id="who">กำลังเปิด…</p>
+
+<section class="clock">
+  <div class="t" id="time">--:--</div>
+  <div class="d" id="date"></div>
+  <div class="state" id="state">กำลังตรวจสอบสถานะ</div>
+</section>
+
+<div id="pane">
+  <button id="shoot" disabled>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 8a2 2 0 0 1 2-2h2.5l1.4-2h6.2L16.5 6H19a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+      <circle cx="12" cy="12.5" r="3.6"/>
+    </svg>
+    <span id="shootLabel">ถ่ายรูปเข้างาน</span>
+  </button>
+  <input type="file" id="file" accept="image/*" capture="user">
+</div>
+
+<div class="result hide" id="done">
+  <img id="thumb" alt="">
+  <div class="head" id="doneHead"></div>
+  <div class="sub" id="doneSub"></div>
+  <div class="flag hide" id="doneFlag"></div>
+</div>
+<button class="ghost hide" id="close">ปิดหน้านี้</button>
+
+<p class="note">บันทึกรูป เวลา และตำแหน่งที่ถ่าย<br>ใช้ยืนยันการลงเวลาเท่านั้น เก็บไว้ 90 วัน</p>
+
+<script>
+const API   = 'PASTE_APPS_SCRIPT_WEB_APP_URL';
+const LIFF  = 'PASTE_LIFF_ID';
+
+let me = null, pos = null, mode = 'IN';
+
+/* นาฬิกา */
+function tick(){
+  const n = new Date();
+  document.getElementById('time').textContent =
+    String(n.getHours()).padStart(2,'0') + ':' + String(n.getMinutes()).padStart(2,'0');
+  document.getElementById('date').textContent =
+    n.toLocaleDateString('th-TH',{weekday:'long',day:'numeric',month:'long'});
+}
+tick(); setInterval(tick, 10000);
+
+/* อ่านตำแหน่งเงียบ ๆ ตั้งแต่เปิดหน้า */
+function locate(){
+  if(!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(
+    p => pos = {lat:p.coords.latitude, lng:p.coords.longitude, acc:Math.round(p.coords.accuracy)},
+    () => pos = null,
+    {enableHighAccuracy:true, timeout:8000, maximumAge:30000}
+  );
+}
+
+async function start(){
+  await liff.init({liffId:LIFF});
+  if(!liff.isLoggedIn()){ liff.login(); return; }
+  me = await liff.getProfile();
+  locate();
+
+  const r = await fetch(API + '?action=status&uid=' + encodeURIComponent(me.userId));
+  const s = await r.json();
+  mode = s.next || 'IN';
+
+  // ยังไม่ถูกเปิดใช้งานโดยแอดมิน
+  if (s.unregistered) {
+    document.getElementById('who').innerHTML = 'สวัสดี <strong>' + me.displayName + '</strong>';
+    document.getElementById('state').textContent = 'ยังไม่ได้เปิดใช้งาน แจ้งแอดมินให้เปิดให้ก่อนครับ';
+    return;
+  }
+
+  document.getElementById('who').innerHTML = 'สวัสดี <strong>' + (s.name || me.displayName) + '</strong>';
+  document.getElementById('state').innerHTML = s.in
+    ? 'เข้างานแล้ว <b>' + s.in + '</b>'
+    : 'ยังไม่ได้ลงเวลาวันนี้';
+  document.getElementById('shootLabel').textContent =
+    mode === 'IN' ? 'ถ่ายรูปเข้างาน' : 'ถ่ายรูปออกงาน';
+  document.getElementById('shoot').disabled = false;
+}
+
+document.getElementById('shoot').onclick = () => document.getElementById('file').click();
+
+document.getElementById('file').onchange = async ev => {
+  const f = ev.target.files[0];
+  if(!f) return;
+  const btn = document.getElementById('shoot');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span><span>กำลังบันทึก…</span>';
+
+  const b64 = await shrink(f);
+  try{
+    const res = await fetch(API, {
+      method:'POST',
+      headers:{'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({
+        action:'punch', type:mode, idToken:liff.getIDToken(),
+        uid:me.userId, photo:b64,
+        lat:pos?pos.lat:'', lng:pos?pos.lng:'', acc:pos?pos.acc:''
+      })
+    });
+    const out = await res.json();
+    if(!out.ok) throw new Error(out.error || 'บันทึกไม่สำเร็จ');
+
+    document.getElementById('pane').classList.add('hide');
+    document.getElementById('thumb').src = 'data:image/jpeg;base64,' + b64;
+    document.getElementById('doneHead').textContent =
+      (out.type === 'IN' ? 'เข้างาน ' : 'ออกงาน ') + out.time;
+    document.getElementById('doneSub').textContent = out.summary || '';
+    if(out.flag){
+      const fl = document.getElementById('doneFlag');
+      fl.textContent = out.flag; fl.classList.remove('hide');
+    }
+    document.getElementById('done').classList.remove('hide');
+    document.getElementById('close').classList.remove('hide');
+  }catch(e){
+    btn.disabled = false;
+    btn.innerHTML = '<span>ส่งไม่สำเร็จ แตะเพื่อลองใหม่</span>';
+    document.getElementById('state').textContent = 'สัญญาณไม่ดี ลองอีกครั้ง';
+  }
+};
+
+document.getElementById('close').onclick = () => liff.closeWindow();
+
+/* ย่อรูปให้เล็กก่อนส่ง — ด้านยาวสุด 800px */
+function shrink(file){
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => {
+      const s = Math.min(1, 800 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = img.width * s; c.height = img.height * s;
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      res(c.toDataURL('image/jpeg', .72).split(',')[1]);
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+start();
+</script>
+</body>
+</html>
